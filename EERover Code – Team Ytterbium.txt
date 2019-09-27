@@ -1,0 +1,219 @@
+#include <FreqCounter.h>
+#include <UnoWiFiDevEdSerial1.h> //https://github.com/jandrassy/UnoWiFiDevEdSerial1
+#include <WiFiLink.h> //https://github.com/jandrassy/arduino-library-wifilink
+//#define STA_MODE  //Comment out this line if you want to use the Arduino's WiFi access point
+
+char ssid[] = "EEERover";      //  your network SSID (name)
+char pass[] = "exhibition";   // your network password
+int keyIndex = 0;                 // your network key Index number (needed only for WEP)
+IPAddress ip(192,168,0,22);    // unique ip address to access this Arduino - MODIFY THIS
+
+int status = WL_IDLE_STATUS;
+WiFiServer server(80);
+
+
+const int left = 10;
+const int right = 9;
+const int dirl = 7;
+const int dirr = 8;
+const int sound = 12;
+const int mod = 5;
+const int car = 3;
+
+bool modulation;
+bool carrier;
+bool acoustic;
+
+unsigned long timeh;
+unsigned long timel;
+unsigned long ttime;
+unsigned long frq;
+
+void setup() {
+  Serial.begin(115200);      // initialize serial communication
+  Serial.print("H");
+  pinMode(LED_BUILTIN, OUTPUT);      // set the LED pin mode
+
+  
+  Serial1.begin(115200);
+  Serial.print("e");
+  Serial1.resetESP();
+  Serial.print("l");
+  WiFi.init(&Serial1);
+  Serial.print("l");
+  delay(3000);
+
+  //Check if communication with the wifi module has been established
+
+  if (WiFi.status() == WL_NO_WIFI_MODULE_COMM) {
+    Serial.println("Communication with WiFi module not established.");
+    while (true); // don't continue:
+  }
+  Serial.print("o\n");
+
+
+  // attempt to connect to Wifi network:
+  #ifdef STA_MODE
+    WiFi.config(ip);
+    while ( status != WL_CONNECTED) {
+      Serial.print("Attempting to connect to Network named: ");
+      Serial.println(ssid);                   // print the network name (SSID);
+  
+      // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
+      status = WiFi.begin(ssid, pass);
+      // wait 10 seconds for connection:
+      delay(10000);
+    }
+  #endif
+  server.begin();                           // start the web server on port 80
+  printWifiStatus();                        // you're connected now, so print out the status
+
+  pinMode(left, OUTPUT);
+  pinMode(right, OUTPUT);
+  pinMode(dirl, OUTPUT);
+  pinMode(dirr, OUTPUT);
+  pinMode(sound, INPUT);
+  pinMode(car, INPUT);
+}
+
+
+void loop() {
+  WiFiClient client = server.available();   // listen for incoming clients
+
+  if (client) {                             // if you get a client,
+    Serial.println("new client");           // print a message out the serial port
+    String currentLine = "";                // make a String to hold incoming data from the client
+    while (client.connected()) {            // loop while the client's connected
+      if (client.available()) {             // if there's bytes to read from the client,
+        char c = client.read();             // read a byte, then
+        Serial.write(c);                    // print it out the serial monitor
+        if (c == '\n') {                    // if the byte is a newline character
+
+          // if the current line is blank, you got two newline characters in a row.
+          // that's the end of the client HTTP request, so send a response:
+          if (currentLine.length() == 0) {
+            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
+            // and a content-type so the client knows what's coming, then a blank line:
+            client.println("HTTP/1.1 200 OK");
+            client.println("Content-type:text/html");
+            client.println();
+
+            client.println("Ytterrbium <br>");
+
+            if (carrier == true){
+                for (int i = 0; i < 10;i++){
+                    timeh = pulseIn(3, HIGH);
+                    timel = pulseIn(3, LOW);
+                    ttime = timeh + timel;
+                    frq = 1000000 / ttime;
+                    client.println (frq);
+                    delay (10);
+                }
+                carrier = false;
+            }
+
+            if (modulation == true){
+                for (int i = 0; i < 5; i++){
+                   FreqCounter::f_comp= 8;             // Set compensation to 12
+                   FreqCounter::start(1000); 
+              
+                   while (FreqCounter::f_ready == 0)         // wait until counter ready
+                   frq=FreqCounter::f_freq;
+                   
+                   client.println(frq);                // print result
+                   delay(10);
+                }
+                modulation = false;
+            }
+
+            if (acoustic == true){
+                for (int i = 0; i < 10;i++){
+                    timeh = pulseIn(sound, HIGH);
+                    timel = pulseIn(sound, LOW);
+                    ttime = timeh + timel;
+                    frq = 1000000 / ttime;
+                    client.println (frq);
+                    delay (10);
+                }
+                acoustic = false;
+            }
+            // The HTTP response ends with another blank line:
+            client.println();
+            // break out of the while loop:
+            break;
+          }
+          else {      // if you got a newline, then clear currentLine:
+            currentLine = "";
+          }
+        }
+        else if (c != '\r') {    // if you got anything else but a carriage return character,
+          currentLine += c;      // add it to the end of the currentLine
+        }
+        if (currentLine.endsWith("GET /forward")) {
+          digitalWrite(dirl, HIGH);
+          digitalWrite(dirr, HIGH);
+          analogWrite(left, 255);
+          analogWrite(right, 255);
+          // forward
+        }
+        if (currentLine.endsWith("GET /left")) {
+          digitalWrite(dirl, HIGH);
+          digitalWrite(dirr, LOW);
+          analogWrite(left, 255);
+          analogWrite(right, 255);
+          // left
+        }
+        if (currentLine.endsWith("GET /backward")) {
+          digitalWrite(dirl, LOW);
+          digitalWrite(dirr, LOW);
+          analogWrite(left, 255);
+          analogWrite(right, 255);
+          // backward
+        }
+        if (currentLine.endsWith("GET /right")) {
+          digitalWrite(dirl, LOW);
+          digitalWrite(dirr, HIGH);
+          analogWrite(left, 255);
+          analogWrite(right, 255);
+          // right
+        }
+        if (currentLine.endsWith("GET /stop")) {
+          analogWrite(left, 0);
+          analogWrite(right, 0);
+          // stop
+        }
+        if (currentLine.endsWith("GET /sound")){
+          acoustic = true;
+        }
+        if (currentLine.endsWith("GET /mod")){
+          modulation = true;
+        }
+        if (currentLine.endsWith("GET /carrier")){
+          carrier = true;
+        }
+      }
+    }
+    // close the connection:
+    client.stop();
+    Serial.println("client disconnected");
+  }
+}
+void printWifiStatus() {
+  // print the SSID of the network you're attached to:
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  // print your WiFi shield's IP address:
+  IPAddress ip = WiFi.localIP();
+  Serial.print("IP Address: ");
+  Serial.println(ip);
+
+  // print the received signal strength:
+  long rssi = WiFi.RSSI();
+  Serial.print("signal strength (RSSI):");
+  Serial.print(rssi);
+  Serial.println(" dBm");
+  // print where to go in a browser:
+  Serial.print("To see this page in action, open a browser to http://");
+  Serial.println(ip);
+}
